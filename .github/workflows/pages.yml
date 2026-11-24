@@ -26,7 +26,7 @@ jobs:
       - run: npm run build
         env:
           VITE_X42_API_URL: ${{ vars.VITE_X42_API_URL }}
-           VITE_ZENTRO_FIREBASE_PROJECT: zentro-bank-dd41d
+          VITE_ZENTRO_FIREBASE_PROJECT: zentro-bank-dd41d
           VITE_ZENTRO_FIREBASE_WEB_API_KEY: ${{ vars.VITE_ZENTRO_FIREBASE_WEB_API_KEY }}
       - uses: actions/upload-pages-artifact@v4
         with:
