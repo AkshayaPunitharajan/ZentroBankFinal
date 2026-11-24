@@ -1,0 +1,178 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signed() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signed() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return signed()
+        && exists(/databases/$(database)/documents/zentroServices/config/admins/$(request.auth.uid));
+    }
+
+    function shortText(value, max) {
+      return value is string && value.size() > 0 && value.size() <= max;
+    }
+
+    function ownsRecord() {
+      return isOwner(resource.data.uid);
+    }
+
+    function newOwner() {
+      return isOwner(request.resource.data.uid);
+    }
+
+    function pending(keys) {
+      return newOwner() && request.resource.data.status == 'PENDING'
+        && request.resource.data.keys().hasOnly(keys);
+    }
+
+    function review() {
+      return isAdmin() && resource.data.status in ['PENDING', 'HOLD']
+        && request.resource.data.status in ['APPROVED', 'HOLD', 'REJECTED']
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+    }
+
+    match /zentroServices/config/admins/{uid} {
+      allow get: if isOwner(uid);
+    }
+
+    match /zentroServices/portal/kyc/{id} {
+      allow read: if isAdmin() || ownsRecord();
+      allow create: if pending(['uid', 'name', 'reference', 'status'])
+        && shortText(request.resource.data.name, 100)
+        && shortText(request.resource.data.reference, 80)
+        && request.resource.data.reference.matches('DEMO-[A-Za-z0-9-]+');
+      allow update: if review();
+    }
+
+    match /zentroServices/portal/applications/{id} {
+      allow read: if isAdmin() || ownsRecord();
+      allow create: if pending(['uid', 'name', 'address', 'phone', 'openingMinor', 'reference', 'status'])
+        && shortText(request.resource.data.name, 100)
+        && shortText(request.resource.data.address, 240)
+        && request.resource.data.phone is string
+        && request.resource.data.phone.matches('[+0-9 ()-]{6,25}')
+        && shortText(request.resource.data.reference, 80)
+        && request.resource.data.reference.matches('DEMO-[A-Za-z0-9-]+')
+        && request.resource.data.openingMinor is int
+        && request.resource.data.openingMinor >= 100000
+        && request.resource.data.openingMinor <= 100000000;
+      allow update: if review();
+    }
+
+    match /zentroServices/portal/closure/{id} {
+      allow read: if isAdmin() || ownsRecord();
+      allow create: if pending(['uid', 'accountNumber', 'reason', 'status'])
+        && request.resource.data.accountNumber is string
+        && request.resource.data.accountNumber.matches('[A-Za-z0-9-]{4,40}')
+        && shortText(request.resource.data.reason, 100);
+      allow update: if review();
+    }
+
+    match /zentroServices/portal/directoryNotes/{ifsc} {
+      allow read: if signed();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['ifsc', 'name', 'address'])
+        && ifsc.matches('[A-Z]{4}0[A-Z0-9]{6}')
+        && request.resource.data.ifsc == ifsc
+        && shortText(request.resource.data.name, 100)
+        && shortText(request.resource.data.address, 240);
+      allow delete: if isAdmin();
+    }
+
+    match /zentroServices/portal/limitNotes/{accountNumber} {
+      allow read, delete: if isAdmin();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['accountNumber', 'perTransferMinor', 'dailyMinor'])
+        && accountNumber.matches('[A-Za-z0-9-]{4,40}')
+        && request.resource.data.accountNumber == accountNumber
+        && request.resource.data.perTransferMinor is int
+        && request.resource.data.dailyMinor is int
+        && request.resource.data.perTransferMinor > 0
+        && request.resource.data.dailyMinor >= request.resource.data.perTransferMinor
+        && request.resource.data.dailyMinor <= 9007199254740991;
+    }
+
+    match /zentroServices/portal/beneficiaries/{id} {
+      function valid() {
+        let data = request.resource.data;
+        return newOwner() && data.keys().hasOnly(['uid', 'name', 'ifsc', 'accountNumber'])
+          && shortText(data.name, 100)
+          && data.ifsc is string && data.ifsc.matches('[A-Z]{4}0[A-Z0-9]{6}')
+          && data.accountNumber is string && data.accountNumber.matches('[A-Za-z0-9-]{4,40}');
+      }
+      allow read, delete: if ownsRecord();
+      allow create: if valid();
+      allow update: if ownsRecord() && valid();
+    }
+
+    match /zentroServices/portal/profiles/{uid} {
+      function valid() {
+        let data = request.resource.data;
+        return isOwner(uid) && newOwner()
+          && data.keys().hasOnly(['uid', 'name', 'address', 'phone'])
+          && shortText(data.name, 100) && shortText(data.address, 240)
+          && data.phone is string && data.phone.matches('[+0-9 ()-]{6,25}');
+      }
+      allow read: if isAdmin() || ownsRecord();
+      allow create: if valid();
+      allow update: if ownsRecord() && valid();
+    }
+
+    match /zentroServices/portal/products/{id} {
+      allow read: if signed();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['name', 'rateBps', 'maxMonths'])
+        && shortText(request.resource.data.name, 100)
+        && request.resource.data.rateBps is int
+        && request.resource.data.rateBps >= 0 && request.resource.data.rateBps <= 10000
+        && request.resource.data.maxMonths is int
+        && request.resource.data.maxMonths >= 1 && request.resource.data.maxMonths <= 360;
+    }
+
+    match /zentroServices/portal/loans/{id} {
+      function validTerms(data, productId) {
+        let product = get(/databases/$(database)/documents/zentroServices/portal/products/$(productId)).data;
+        return data.productName == product.name && data.rateBps == product.rateBps
+          && data.months is int && data.months >= 1 && data.months <= product.maxMonths;
+      }
+      allow read: if isAdmin() || ownsRecord();
+      allow create: if pending(['uid', 'productId', 'productName', 'rateBps', 'months', 'amountMinor', 'status'])
+        && request.resource.data.amountMinor is int
+        && request.resource.data.amountMinor >= 1 && request.resource.data.amountMinor <= 100000000
+        && request.resource.data.productId is string
+        && request.resource.data.productId.matches('[A-Za-z0-9_-]{1,80}')
+        && validTerms(request.resource.data, request.resource.data.productId);
+      allow update: if review();
+    }
+
+    match /zentroServices/{uid}/portfolio/{accountId} {
+      allow get, list: if isOwner(uid);
+      allow create, update: if isOwner(uid)
+        && get(/databases/$(database)/documents/accounts/$(accountId)).data.customerUid == uid
+        && request.resource.data.keys().hasOnly(['label'])
+        && shortText(request.resource.data.label, 60);
+    }
+
+    match /zentroServices/{uid}/loanApplications/{applicationId} {
+      allow get, list: if isOwner(uid);
+      allow create: if isOwner(uid)
+        && request.resource.data.keys().hasOnly(['purpose', 'amountMinor', 'status'])
+        && shortText(request.resource.data.purpose, 240)
+        && request.resource.data.amountMinor is int
+        && request.resource.data.amountMinor > 0
+        && request.resource.data.amountMinor <= 100000000
+        && request.resource.data.status == 'PENDING';
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
