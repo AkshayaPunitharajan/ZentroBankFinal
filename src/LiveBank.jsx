@@ -6,7 +6,7 @@ import { configuredEndpoint, liveApi, parseEndpoint, readStorage, saveStorage } 
 import Extras from './Extras';
 import { applicationFields, pages as addonPages, saveRecord } from './addons';
 import CustomerServices from './CustomerServices';
-import { servicesEnabled, startServices } from './services-api';
+import { sendPasswordReset, servicesEnabled, startServices } from './services-api';
 import './live.css';
 
 const money = minor => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(minor / 100);
@@ -130,6 +130,7 @@ export default function LiveBank({ bank, switchUrl, openDemo }) {
   const [servicesError, setServicesError] = useState('');
   const [registrationDraft, setRegistrationDraft] = useState(null);
   const [mode, setMode] = useState('bank');
+  const [returnMode, setReturnMode] = useState('bank');
   const [session, setSession] = useState(null);
   const prefix = '/banks/' + bank.id;
   const [url, setUrl] = useState(base);
@@ -207,8 +208,14 @@ export default function LiveBank({ bank, switchUrl, openDemo }) {
     event.preventDefault();
     setBusy(true);
     setError('');
+    setNote('');
     try {
       const loginEmail = email.trim();
+      if (mode === 'reset') {
+        await sendPasswordReset(loginEmail);
+        setNote('If this email can receive a reset link, check its inbox and spam folder.');
+        return;
+      }
       if (mode !== 'bank') {
         const registering = mode === 'register';
         const draft = registering ? Object.fromEntries(new FormData(event.currentTarget)) : null;
@@ -346,8 +353,9 @@ export default function LiveBank({ bank, switchUrl, openDemo }) {
             <div><Button type="submit" variant="contained">Save connection</Button></div></form>
         </section>}
         {!session && base && !editUrl && <section className={mode === 'register' ? 'panel live-sign-in registration' : 'panel live-sign-in'}><header className="panel-head"><div>
-          <h1>{{ bank: 'Welcome back', admin: 'Admin sign-in', services: 'Application sign-in', register: 'Customer registration' }[mode]}</h1>
-          <p>{mode === 'register' ? 'Create a test login and submit your account application in one step.' : 'Sign in with your Zentro test account.'}</p></div></header>
+          <h1>{{ bank: 'Welcome back', admin: 'Admin sign-in', services: 'Application sign-in', register: 'Customer registration', reset: 'Reset your password' }[mode]}</h1>
+          <p>{mode === 'reset' ? 'Enter the email address you use to sign in to Zentro.' :
+            mode === 'register' ? 'Create a test login and submit your account application in one step.' : 'Sign in with your Zentro test account.'}</p></div></header>
           <form className="transfer-form" onSubmit={signIn}>
             {mode !== 'bank' && !addonEnabled && <Alert severity="warning">
               Add your Zentro Firebase web settings to .env.local and restart Vite to continue.
@@ -362,13 +370,17 @@ export default function LiveBank({ bank, switchUrl, openDemo }) {
                 slotProps={{ htmlInput: { maxLength: 80 } }} />
             </div>}
             <TextField label="Email" type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} />
-            <TextField label="Password" type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+            {mode !== 'reset' && <TextField label="Password" type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
               required value={password} onChange={event => setPassword(event.target.value)}
-              slotProps={{ htmlInput: { minLength: mode === 'register' ? 6 : undefined } }} />
+              slotProps={{ htmlInput: { minLength: mode === 'register' ? 6 : undefined } }} />}
             <div><Button type="submit" variant="contained" disabled={busy || (mode !== 'bank' && !addonEnabled)}
               fullWidth endIcon={<ArrowRight size={17} />}>
-              {busy ? 'Please wait…' : mode === 'register' ? 'Register and submit' : 'Sign in'}
+              {busy ? 'Please wait…' : mode === 'reset' ? 'Send reset email' : mode === 'register' ? 'Register and submit' : 'Sign in'}
             </Button></div>
+            {['bank', 'services', 'admin'].includes(mode) && addonEnabled && <Button type="button" disabled={busy}
+              onClick={() => { setReturnMode(mode); setMode('reset'); setError(''); setNote(''); setPassword(''); }}>
+              Forgot password?
+            </Button>}
             {mode === 'bank' ? <>
               <Button type="button" variant="outlined" disabled={busy}
                 onClick={() => { setMode('register'); setError(''); setPassword(''); }}>Register as a customer</Button>
@@ -376,7 +388,9 @@ export default function LiveBank({ bank, switchUrl, openDemo }) {
                 <Button type="button" key={next} disabled={busy}
                   onClick={() => { setMode(next); setError(''); setPassword(''); }}>{label}</Button>)}</div>}
             </> : <Button type="button" disabled={busy}
-              onClick={() => { setMode('bank'); setError(''); setPassword(''); }}>Back to bank sign-in</Button>}
+              onClick={() => { setMode(mode === 'reset' ? returnMode : 'bank'); setError(''); setNote(''); setPassword(''); }}>
+              {mode === 'reset' ? 'Back to sign-in' : 'Back to bank sign-in'}
+            </Button>}
           </form></section>}
         {session && <>
           {session.token && loaded && !data.accounts.length && <Alert severity="info">This Firebase user has no synthetic account in this bank. Attach an account to this Firebase UID.</Alert>}

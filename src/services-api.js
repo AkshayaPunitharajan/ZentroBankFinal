@@ -24,6 +24,23 @@ async function request(url, options) {
   return response.json();
 }
 
+export async function sendPasswordReset(email) {
+  const response = await fetch('https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key=' + encodeURIComponent(apiKey), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ requestType: 'PASSWORD_RESET', email }),
+    signal: AbortSignal.timeout(12000),
+  });
+  if (response.ok) return;
+  const result = await response.json().catch(() => ({}));
+  const code = result.error?.message?.split(' : ')[0];
+  if (['EMAIL_NOT_FOUND', 'USER_DISABLED'].includes(code)) return;
+  if (response.status === 429 || code?.startsWith('TOO_MANY_ATTEMPTS')) {
+    throw new Error('Too many reset requests. Wait a while before trying again.');
+  }
+  throw new Error('Could not request a reset email. Check the address and try again.');
+}
+
 export async function startServices(email, password, expectedUid, register = false) {
   const auth = await request('https://identitytoolkit.googleapis.com/v1/accounts:' + (register ? 'signUp' : 'signInWithPassword') + '?key=' + encodeURIComponent(apiKey), {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
